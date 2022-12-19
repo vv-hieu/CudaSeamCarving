@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 struct pixel_t {
     float r; // Value range [0.0, 1.0]
@@ -21,9 +22,9 @@ float computeError(const pixel_t* p1, const pixel_t* p2, int n) {
     float err = 0.0f;
 	for (int i = 0; i < n; i++)
 	{
-		err += abs(p1[i].r - p2[i].r);
-		err += abs(p1[i].g - p2[i].g);
-		err += abs(p1[i].b - p2[i].b);
+		err += p1[i].r - p2[i].r > 0.0f ? p1[i].r - p2[i].r : p2[i].r - p1[i].r;
+		err += p1[i].g - p2[i].g > 0.0f ? p1[i].g - p2[i].g : p2[i].g - p1[i].g;
+		err += p1[i].b - p2[i].b > 0.0f ? p1[i].b - p2[i].b : p2[i].b - p1[i].b;
 	}
 	err *= 255.0f / (n * 3.0f);
 	return err;

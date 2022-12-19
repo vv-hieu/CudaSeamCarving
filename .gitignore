@@ -2,3 +2,6 @@
 *.exp
 *.lib
 __pycache__
+
+output_*.pnm
+debug_info_*

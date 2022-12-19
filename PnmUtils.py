@@ -1,7 +1,9 @@
 from PIL import Image
 import numpy as np
 
-def show_pnm(file_name):
+SEAM_COLOR = (255, 0, 255)
+
+def show_pnm(file_name, seam = None):
     with open(file_name, 'r') as f:
         vals = f.read().split()
     w = int(vals[1])
@@ -12,13 +14,22 @@ def show_pnm(file_name):
         pixels = np.array(vals[4:], dtype=np.uint8).reshape((h, w, 3))
     else:
         return None
-  
+
+    if (seam is not None):
+        for seamPoint in seam:
+            pixels[seamPoint[1]][seamPoint[0]] = SEAM_COLOR
+    
     return Image.fromarray(pixels)
 
-def show_matrix(matrix_file):
+def show_matrix(matrix_file, seam_file = None):
     m = np.loadtxt(matrix_file)
-    m = m + m.min()
-    m = m / m.max()
+    m = np.interp(m, (m.min(), m.max()), (0.0, 1.0))
     m = m * 255
-    m = m.astype(np.uint8)
+    m = np.stack((m.astype(np.uint8),) * 3, axis=-1)
+
+    if (seam_file is not None):
+        seam = np.loadtxt(seam_file).astype(np.uint32)
+        for seamPoint in seam:
+            m[seamPoint[1]][seamPoint[0]] = SEAM_COLOR
+
     return Image.fromarray(m)
