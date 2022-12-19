@@ -47,9 +47,13 @@ char* concatStr(const char* s1, const char* s2) {
     return result;
 }
 
-void seamCarving_host(const pixel_t* input, int inputWidth, int inputHeight, pixel_t* output, int outputWidth, int outputHeight) {
+// Host
 
+void seamCarving_host(const pixel_t* input, int inputWidth, int inputHeight, pixel_t* output, int outputWidth, int outputHeight) {
+    
 }
+
+// Device
 
 void seamCarving_device(const pixel_t* input, int inputWidth, int inputHeight, pixel_t* output, int outputWidth, int outputHeight) {
 
@@ -99,8 +103,8 @@ int main(int argc, char** argv) {
     int outputHeight = inputHeight;
 
     // Info
-    cudaDeviceProp deviceProps;
-    CHECK(cudaGetDeviceProperties(&deviceProps, 0));
+    cudaDeviceProp devProv;
+    CHECK(cudaGetDeviceProperties(&devProv, 0));
 
     printf("[INFO] GPU\n");
     printf("[INFO]     Name                         : %s\n"        , devProv.name);
@@ -113,7 +117,7 @@ int main(int argc, char** argv) {
     printf("[INFO]     SMEM per block               : %zu byte\n\n", devProv.sharedMemPerBlock);
     printf("[INFO] Input image\n");
     printf("[INFO]     Width  : %d (pixels)\n"  , inputWidth);
-    printf("[INFO]     Height : %d (pixels)\n\n", inputheight);
+    printf("[INFO]     Height : %d (pixels)\n\n", inputHeight);
     printf("[INFO] Output image\n");
     printf("[INFO]     Width  : %d (pixels)\n"  , outputWidth);
     printf("[INFO]     Height : %d (pixels)\n\n", outputHeight);
