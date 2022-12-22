@@ -46,6 +46,7 @@ struct GpuTimer {
 struct DebugInfo {
     const char* outputEnergyFile;
     const char* outputSeamFile;
+    const char* outputProfilerFile;
 };
 
 char* concatStr(const char* s1, const char* s2) {
@@ -70,90 +71,73 @@ int clamp(int value, int min, int max) {
 }
 
 void computeEnergy_host(const pixel_t* input, int inputWidth, int inputHeight, float* output) {
-    const float sobelXFilter[] = {
-        -1.0f,  0.0f,  1.0f,
-        -2.0f,  0.0f,  2.0f,
-        -1.0f,  0.0f,  1.0f
-    };
-    const float sobelYFilter[] = {
-        -1.0f, -2.0f, -1.0f,
-         0.0f,  0.0f,  0.0f,
-         1.0f,  2.0f,  1.0f
-    };
-
     for (int x0 = 0; x0 < inputWidth; ++x0) {
         for (int y0 = 0; y0 < inputHeight; ++y0) {
-
-            int i0 = x0 + y0 * inputWidth;
-
-            float sobelX = 0.0f;
-            float sobelY = 0.0f;
-
-            for (int x1 = 0; x1 < 3; ++x1) {
-                for (int y1 = 0; y1 < 3; ++y1) {
-                    pixel_t pixel = input[clamp(x0 + x1 - 1, 0, inputWidth - 1) + clamp(y0 + y1 - 1, 0, inputHeight - 1) * inputWidth];
-                    float val = 0.3f * pixel.r + 0.59f * pixel.g + 0.11f * pixel.b;
-                    int fIdx = x1 + y1 * 3;
-                    sobelX += val * sobelXFilter[fIdx];
-                    sobelY += val * sobelYFilter[fIdx];
-                }
-            }
-
-            output[i0] = sqrt(sobelX * sobelX + sobelY * sobelY);
+            float sobelX = (
+                -1.0f * diff(input[x0 + y0 * inputWidth], input[clamp(x0 - 1, 0, inputWidth - 1) + clamp(y0 - 1, 0, inputHeight - 1) * inputWidth]) +
+                -2.0f * diff(input[x0 + y0 * inputWidth], input[clamp(x0 - 1, 0, inputWidth - 1) + y0                                * inputWidth]) +
+                -1.0f * diff(input[x0 + y0 * inputWidth], input[clamp(x0 - 1, 0, inputWidth - 1) + clamp(y0 + 1, 0, inputHeight - 1) * inputWidth]) +
+                 1.0f * diff(input[x0 + y0 * inputWidth], input[clamp(x0 + 1, 0, inputWidth - 1) + clamp(y0 - 1, 0, inputHeight - 1) * inputWidth]) +
+                 2.0f * diff(input[x0 + y0 * inputWidth], input[clamp(x0 + 1, 0, inputWidth - 1) + y0                                * inputWidth]) +
+                 1.0f * diff(input[x0 + y0 * inputWidth], input[clamp(x0 + 1, 0, inputWidth - 1) + clamp(y0 + 1, 0, inputHeight - 1) * inputWidth])
+            );
+            float sobelY = (
+                -1.0f * diff(input[x0 + y0 * inputWidth], input[clamp(x0 - 1, 0, inputWidth - 1) + clamp(y0 - 1, 0, inputHeight - 1) * inputWidth]) +
+                -2.0f * diff(input[x0 + y0 * inputWidth], input[x0                               + clamp(y0 - 1, 0, inputHeight - 1) * inputWidth]) +
+                -1.0f * diff(input[x0 + y0 * inputWidth], input[clamp(x0 + 1, 0, inputWidth - 1) + clamp(y0 - 1, 0, inputHeight - 1) * inputWidth]) +
+                 1.0f * diff(input[x0 + y0 * inputWidth], input[clamp(x0 - 1, 0, inputWidth - 1) + clamp(y0 + 1, 0, inputHeight - 1) * inputWidth]) +
+                 2.0f * diff(input[x0 + y0 * inputWidth], input[x0                               + clamp(y0 + 1, 0, inputHeight - 1) * inputWidth]) +
+                 1.0f * diff(input[x0 + y0 * inputWidth], input[clamp(x0 + 1, 0, inputWidth - 1) + clamp(y0 + 1, 0, inputHeight - 1) * inputWidth])
+            );
+            float val = sobelX * sobelX + sobelY + sobelY;
+            output[x0 + y0 * inputWidth] = sqrtf(val < 0.0f ? 0.0f : val);
         }
     }
 }
 
-void findVerticalSeam_host(const float* energy, int inputWidth, int inputHeight, int* output) {
-    float* energyToBottom = (float*)malloc(inputWidth * inputHeight * sizeof(float));
-    int*   path           = (int*)malloc(inputWidth * (inputHeight - 1) * sizeof(int));
-
+void findVerticalSeam_host(const float* energy, int inputWidth, int inputHeight, int* output, float* cumulativeEnergy, int* path) {
     for (int col = 0; col < inputWidth; ++col) {
-        int i = col + (inputHeight - 1) * inputWidth;
-        energyToBottom[i] = energy[i];
+        cumulativeEnergy[col] = energy[col];
     }
 
     float seamWeight = 0.0f;
     int   seamIdx    = -1;
-    for (int row = inputHeight - 2; row >= 0; --row) {
+    for (int row = 1; row < inputHeight; ++row) {
         for (int col = 0; col < inputWidth; ++col) {
             int s = col - 1 < 0 ? 0 : col - 1;
             int t = col + 1 > inputWidth - 1 ? inputWidth - 1 : col + 1;
             
-            int min = energyToBottom[s + (row + 1) * inputWidth];
-            int idx = s;
+            int min = cumulativeEnergy[col + (row - 1) * inputWidth];
+            int idx = col;
 
             for (int i = s; i <= t; ++i) {
-                int e = energyToBottom[i + (row + 1) * inputWidth];
+                int e = cumulativeEnergy[i + (row - 1) * inputWidth];
                 if (min > e) {
-                    idx = i;
                     min = e;
+                    idx = i;
                 }
             }
 
             int i = col + row * inputWidth;
-            energyToBottom[i] = energy[i] + min;
-            path[i]           = idx;
+            cumulativeEnergy[i] = energy[i] + min;
+            path[i]             = idx;
 
-            if (row == 0) {
-                if (seamIdx < 0 || (seamIdx >= 0 && seamWeight > energyToBottom[i])) {
-                    seamWeight = energyToBottom[i];
+            if (row == inputHeight - 1) {
+                if (seamIdx < 0 || (seamIdx >= 0 && seamWeight > cumulativeEnergy[i])) {
+                    seamWeight = cumulativeEnergy[i];
                     seamIdx    = col;
                 }
             }
         }
     }
 
-    output[0] = seamIdx;
-    for (int row = 0; row < inputHeight - 1; ++row) {
-        output[row + 1] = path[output[row] + row * inputWidth];
+    output[inputHeight - 1] = seamIdx;
+    for (int row = inputHeight - 2; row >= 0; --row) {
+        output[row] = path[output[row + 1] + (row + 1) * inputWidth];
     }
-
-    free(energyToBottom);
-    free(path);
 }
 
-void removeVerticalSeam_host(const pixel_t* input, int inputWidth, int inputHeight, int* seam, pixel_t* output) {
+void removeVerticalSeam_host(const pixel_t* input, int inputWidth, int inputHeight, const int* seam, pixel_t* output) {
     for (int row = 0; row < inputHeight; ++row) {
         for (int col = 0; col < inputWidth - 1; ++col) {
             output[col + row * (inputWidth - 1)] = input[col + (col >= seam[row]) + row * inputWidth];
@@ -161,56 +145,49 @@ void removeVerticalSeam_host(const pixel_t* input, int inputWidth, int inputHeig
     }
 }
 
-void findHorizontalSeam_host(const float* energy, int inputWidth, int inputHeight, int* output) {
-    float* energyToRight = (float*)malloc(inputWidth * inputHeight * sizeof(float));
-    int*   path          = (int*)malloc((inputWidth - 1) * inputHeight * sizeof(int));
-
+void findHorizontalSeam_host(const float* energy, int inputWidth, int inputHeight, int* output, float* cumulativeEnergy, int* path) {
     for (int row = 0; row < inputHeight; ++row) {
-        int i = inputWidth - 1 + row * inputWidth;
-        energyToRight[i] = energy[i];
+        cumulativeEnergy[row] = energy[row];
     }
 
     float seamWeight = 0.0f;
     int   seamIdx    = -1;
-    for (int col = inputWidth - 2; col >= 0; --col) {
+    for (int col = 1; col < inputWidth; ++col) {
         for (int row = 0; row < inputHeight; ++row) {
             int s = row - 1 < 0 ? 0 : row - 1;
             int t = row + 1 > inputHeight - 1 ? inputHeight - 1 : row + 1;
             
-            int min = energyToRight[col + 1 + s * inputWidth];
-            int idx = s;
+            int min = cumulativeEnergy[col - 1 + row * inputWidth];
+            int idx = row;
 
             for (int i = s; i <= t; ++i) {
-                int e = energyToRight[col + 1 + i * inputWidth];
+                int e = cumulativeEnergy[col - 1 + i * inputWidth];
                 if (min > e) {
-                    idx = i;
                     min = e;
+                    idx = i;
                 }
             }
 
             int i = col + row * inputWidth;
-            energyToRight[i] = energy[i] + min;
-            path[col + row * (inputWidth - 1)] = idx;
+            cumulativeEnergy[i] = energy[i] + min;
+            path[col + row * inputWidth] = idx;
 
-            if (col == 0) {
-                if (seamIdx < 0 || (seamIdx >= 0 && seamWeight > energyToRight[i])) {
-                    seamWeight = energyToRight[i];
+            if (col == inputWidth - 1) {
+                if (seamIdx < 0 || (seamIdx >= 0 && seamWeight > cumulativeEnergy[i])) {
+                    seamWeight = cumulativeEnergy[i];
                     seamIdx    = row;
                 }
             }
         }
     }
 
-    output[0] = seamIdx;
-    for (int col = 0; col < inputWidth - 1; ++col) {
-        output[col + 1] = path[col + output[col] * (inputWidth - 1)];
+    output[inputWidth - 1] = seamIdx;
+    for (int col = inputWidth - 2; col >= 0; --col) {
+        output[col] = path[col + 1 + output[col + 1] * inputWidth];
     }
-
-    free(energyToRight);
-    free(path);
 }
 
-void removeHorizontalSeam_host(const pixel_t* input, int inputWidth, int inputHeight, int* seam, pixel_t* output) {
+void removeHorizontalSeam_host(const pixel_t* input, int inputWidth, int inputHeight, const int* seam, pixel_t* output) {
     for (int row = 0; row < inputHeight - 1; ++row) {
         for (int col = 0; col < inputWidth; ++col) {
             output[col + row * inputWidth] = input[col + (row + (row >= seam[col])) * inputWidth];
@@ -218,26 +195,32 @@ void removeHorizontalSeam_host(const pixel_t* input, int inputWidth, int inputHe
     }
 }
 
-void seamCarving_host(const pixel_t* input, int inputWidth, int inputHeight, pixel_t* output, int outputWidth, int outputHeight, DebugInfo* debug) {
+void seamCarving_host(const image_t& input, image_t& output, DebugInfo* debug) {
     bool outputDebug    = false;
     int  debugFileIndex = 0;
     char filename[1024];
 
     if (debug) {
+        system("rmdir -r debug_info_host");
         system("mkdir debug_info_host");
         outputDebug = true;
     }
+
+    int inputWidth   = input.width;
+    int inputHeight  = input.height;
+    int outputWidth  = output.width;
+    int outputHeight = output.height;
     
     pixel_t* currentInput  = (pixel_t*)malloc(inputWidth * inputHeight * sizeof(pixel_t));
     pixel_t* currentOutput = (pixel_t*)malloc(inputWidth * inputHeight * sizeof(pixel_t));
     
-    memcpy(currentOutput, input, inputWidth * inputHeight * sizeof(pixel_t));
+    memcpy(currentOutput, input.pixels, inputWidth * inputHeight * sizeof(pixel_t));
     
-    float* energy         = (float*)malloc(inputWidth * inputHeight * sizeof(float));
-    int*   verticalSeam   = (int*)malloc(inputHeight * sizeof(int));
-    int*   horizontalSeam = (int*)malloc(inputWidth * sizeof(int));
+    float* energy           = (float*)malloc(inputWidth * inputHeight * sizeof(float));
+    float* cumulativeEnergy = (float*)malloc(inputWidth * inputHeight * sizeof(float));
+    int*   path             = (int*)malloc(inputWidth * inputHeight * sizeof(int));
+    int*   seam             = (int*)malloc((inputWidth < inputHeight ? inputHeight : inputWidth) * sizeof(int));
 
-    // Remove vertical seams
     while (inputWidth > outputWidth) {
 
         pixel_t* temp = currentInput;
@@ -265,25 +248,25 @@ void seamCarving_host(const pixel_t* input, int inputWidth, int inputHeight, pix
             }
         }
 
-        findVerticalSeam_host(energy, inputWidth, inputHeight, verticalSeam);
+        findVerticalSeam_host(energy, inputWidth, inputHeight, seam, cumulativeEnergy, path);
 
         if (outputDebug) {
             sprintf(filename, "debug_info_host/%s_%d.txt", debug->outputSeamFile, debugFileIndex);
             FILE* f = fopen(filename, "w");
             if (f) {
                 for (int row = 0; row < inputHeight; ++row) {
-                    fprintf(f, "%d %d\n", verticalSeam[row], row);
+                    fprintf(f, "%d %d\n", seam[row], row);
                 }
                 fclose(f);
             }
         }
 
-        removeVerticalSeam_host(currentInput, inputWidth, inputHeight, verticalSeam, currentOutput);
+        removeVerticalSeam_host(currentInput, inputWidth, inputHeight, seam, currentOutput);
+
         --inputWidth;
         ++debugFileIndex;
     }
 
-    // Remove horizontal seams
     while (inputHeight > outputHeight) {
         pixel_t* temp = currentInput;
         currentInput  = currentOutput;
@@ -310,41 +293,529 @@ void seamCarving_host(const pixel_t* input, int inputWidth, int inputHeight, pix
             }
         }
 
-        findHorizontalSeam_host(energy, inputWidth, inputHeight, horizontalSeam);
+        findHorizontalSeam_host(energy, inputWidth, inputHeight, seam, cumulativeEnergy, path);
 
         if (outputDebug) {
             sprintf(filename, "debug_info_host/%s_%d.txt", debug->outputSeamFile, debugFileIndex);
             FILE* f = fopen(filename, "w");
             if (f) {
                 for (int col = 0; col < inputWidth; ++col) {
-                    fprintf(f, "%d %d\n", col, horizontalSeam[col]);
+                    fprintf(f, "%d %d\n", col, seam[col]);
                 }
                 fclose(f);
             }
         }
 
-        removeHorizontalSeam_host(currentInput, inputWidth, inputHeight, horizontalSeam, currentOutput);
+        removeHorizontalSeam_host(currentInput, inputWidth, inputHeight, seam, currentOutput);
+
         --inputHeight;
         ++debugFileIndex;
     }
 
-    memcpy(output, currentOutput, outputWidth * outputHeight * sizeof(pixel_t));
+    memcpy(output.pixels, currentOutput, outputWidth * outputHeight * sizeof(pixel_t));
 
     free(currentInput);
     free(currentOutput);
     free(energy);
-    free(verticalSeam);
-    free(horizontalSeam);
+    free(cumulativeEnergy);
+    free(path);
+    free(seam);
 }
 
 // Device
 
-void seamCarving_device(const pixel_t* input, int inputWidth, int inputHeight, pixel_t* output, int outputWidth, int outputHeight) {
+__device__ int bCount0;
+volatile __device__ int bCount1;
 
+__device__ float pixelDiff_device(pixel_t p1, pixel_t p2) {
+    float r = p2.r - p1.r;
+    float g = p2.g - p1.g;
+    float b = p2.b - p1.b;
+    return 0.3f * r + 0.59f * g + 0.11f * b;
+}
+
+__global__ void computeEnergy_device(const pixel_t* input, int inputWidth, int inputHeight, float* output) {
+    extern __shared__ pixel_t sData[];
+    int offset = 0;
+    while (offset < (blockDim.x + 2) * (blockDim.y + 2)) {
+        int dest = threadIdx.x + threadIdx.y * blockDim.x + offset;
+        int destX = dest % (blockDim.x + 2);
+        int destY = dest / (blockDim.x + 2);
+        int srcX = blockIdx.x * blockDim.x + destX - 1;
+        int srcY = blockIdx.y * blockDim.y + destY - 1;
+        srcX = srcX < 0 ? 0 : srcX >= inputWidth  ? inputWidth  - 1 : srcX;
+        srcY = srcY < 0 ? 0 : srcY >= inputHeight ? inputHeight - 1 : srcY;
+
+        if (destY < blockDim.y + 2) {
+            sData[dest] = input[srcX + srcY * inputWidth];
+        }
+
+        offset += blockDim.x * blockDim.y;
+    }
+    __syncthreads();
+
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x >= 0 && x < inputWidth && y >= 0 && y < inputHeight) {
+        float sobelX = (
+            -1.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 0 + (threadIdx.y + 0) * (blockDim.x + 2)]) + 
+            -2.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 0 + (threadIdx.y + 1) * (blockDim.x + 2)]) + 
+            -1.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 0 + (threadIdx.y + 2) * (blockDim.x + 2)]) + 
+             1.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 2 + (threadIdx.y + 0) * (blockDim.x + 2)]) + 
+             2.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 2 + (threadIdx.y + 1) * (blockDim.x + 2)]) + 
+             1.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 2 + (threadIdx.y + 2) * (blockDim.x + 2)])
+        );
+        float sobelY = (
+            -1.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 0 + (threadIdx.y + 0) * (blockDim.x + 2)]) + 
+            -2.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 1 + (threadIdx.y + 0) * (blockDim.x + 2)]) + 
+            -1.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 2 + (threadIdx.y + 0) * (blockDim.x + 2)]) + 
+             1.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 0 + (threadIdx.y + 2) * (blockDim.x + 2)]) + 
+             2.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 1 + (threadIdx.y + 2) * (blockDim.x + 2)]) + 
+             1.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 2 + (threadIdx.y + 2) * (blockDim.x + 2)])
+        );
+        float val = sobelX * sobelX + sobelY + sobelY;
+        output[x + y * inputWidth] = sqrtf(val < 0.0f ? 0.0f : val);
+    }
+    __syncthreads();
+}
+
+__global__ void computeVerticalCumulativeEnergy_device(const float* energy, int inputWidth, int inputHeight, volatile float* cumulativeEnergy, int* path, int* pathIdx) {
+    int k;
+    
+    extern __shared__ int sPathIdx[];
+
+    __shared__ int bi;
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
+        bi = atomicAdd(&bCount0, 1);
+    }
+    if (threadIdx.y == 0) {
+        sPathIdx[threadIdx.x] = threadIdx.x;
+    }
+    __syncthreads();
+
+    k = 0;
+    while (k < inputWidth) {
+        int x = threadIdx.x + k;
+        int y = threadIdx.y + bi * blockDim.y;
+
+        if (x < inputWidth && y < inputHeight) {
+            cumulativeEnergy[x + y * inputWidth] = energy[x + y * inputWidth];
+        }
+
+        k += blockDim.x;
+    }
+    __syncthreads();
+
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
+        while (bCount1 < bi) {}
+    }
+    __syncthreads();
+
+    for (int i = 0; i < blockDim.y; ++i) {
+        if (i == threadIdx.y) {
+            k = 0;
+            while (k < inputWidth) {
+                int x = threadIdx.x + k;
+                int y = threadIdx.y + bi * blockDim.y;
+
+                if (x < inputWidth && y < inputHeight && y > 0) {
+                    int   sid = x - 1 < 0 ? 0 : x - 1;
+                    int   tid = x + 1 > inputWidth - 1 ? inputWidth - 1 : x + 1;
+                    float min = cumulativeEnergy[x + (y - 1) * inputWidth];
+                    int   idx = x;
+
+                    for (int j = sid; j <= tid; ++j) {
+                        float e = cumulativeEnergy[j + (y - 1) * inputWidth];
+                        if (min > e) {
+                            min = e;
+                            idx = j;
+                        }
+                    }
+
+                    cumulativeEnergy[x + y * inputWidth] += min;
+                    path[x + y * inputWidth] = idx;
+                }
+
+                k += blockDim.x;
+            }
+        }
+        __syncthreads();
+    }
+    __threadfence();
+
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
+        ++bCount1;
+    }
+    __syncthreads();
+
+    if (bi == gridDim.y - 1) {
+        if (threadIdx.y == 0) {
+            k = blockDim.x;
+            while (k < inputWidth) {
+                int x = threadIdx.x + k;
+                if (x < inputWidth) {
+                    if (cumulativeEnergy[sPathIdx[threadIdx.x] + (inputHeight - 1) * inputWidth] > cumulativeEnergy[x + (inputHeight - 1) * inputWidth]) {
+                        sPathIdx[threadIdx.x] = x;
+                    }
+                }
+                k += blockDim.x;
+            }
+        }
+        __syncthreads();
+        if (threadIdx.y == 0) {
+            for (int stride = blockDim.x / 2; stride > 0; stride /= 2) {
+                if (threadIdx.x < inputWidth && threadIdx.x + stride < inputWidth) {
+                    if (cumulativeEnergy[sPathIdx[threadIdx.x] + (inputHeight - 1) * inputWidth] > cumulativeEnergy[sPathIdx[threadIdx.x + stride] + (inputHeight - 1) * inputWidth]) {
+                        sPathIdx[threadIdx.x] = sPathIdx[threadIdx.x + stride];
+                    }
+                }
+            }
+        }
+        __syncthreads();
+        if (threadIdx.x == 0 && threadIdx.y == 0) {
+            pathIdx[0] = sPathIdx[0];
+        }
+    }
+}
+
+__global__ void removeVerticalSeam_device(const pixel_t* input, int inputWidth, int inputHeight, const int* seam, pixel_t* output) {
+    int x = threadIdx.x + blockDim.x * blockIdx.x;
+    int y = threadIdx.y + blockDim.y * blockIdx.y;
+
+    if (x < inputWidth - 1 && y < inputHeight) {
+        output[x + y * (inputWidth - 1)] = input[x + (x >= seam[y]) + y * inputWidth];
+    }
+}
+
+__global__ void computeHorizontalCumulativeEnergy_device(const float* energy, int inputWidth, int inputHeight, volatile float* cumulativeEnergy, int* path, int* pathIdx) {
+    int k;
+    
+    extern __shared__ int sPathIdx[];
+
+    __shared__ int bi;
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
+        bi = atomicAdd(&bCount0, 1);
+    }
+    if (threadIdx.x == 0) {
+        sPathIdx[threadIdx.y] = threadIdx.y;
+    }
+    __syncthreads();
+
+    k = 0;
+    while (k < inputHeight) {
+        int x = threadIdx.x + bi * blockDim.x;
+        int y = threadIdx.y + k;
+
+        if (x < inputWidth && y < inputHeight) {
+            cumulativeEnergy[x + y * inputWidth] = energy[x + y * inputWidth];
+        }
+
+        k += blockDim.y;
+    }
+    __syncthreads();
+
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
+        while (bCount1 < bi) {}
+    }
+    __syncthreads();
+
+    for (int i = 0; i < blockDim.x; ++i) {
+        if (i == threadIdx.x) {
+            k = 0;
+            while (k < inputHeight) {
+                int x = threadIdx.x + bi * blockDim.x;
+                int y = threadIdx.y + k;
+
+                if (x < inputWidth && y < inputHeight && x > 0) {
+                    int   sid = y - 1 < 0 ? 0 : y - 1;
+                    int   tid = y + 1 > inputHeight - 1 ? inputHeight - 1 : y + 1;
+                    float min = cumulativeEnergy[x - 1 + y * inputWidth];
+                    int   idx = y;
+
+                    for (int j = sid; j <= tid; ++j) {
+                        float e = cumulativeEnergy[x - 1 + j * inputWidth];
+                        if (min > e) {
+                            min = e;
+                            idx = j;
+                        }
+                    }
+
+                    cumulativeEnergy[x + y * inputWidth] += min;
+                    path[x + y * inputWidth] = idx;
+                }
+
+                k += blockDim.y;
+            }
+        }
+        __syncthreads();
+    }
+    __threadfence();
+
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
+        ++bCount1;
+    }
+    __syncthreads();
+
+    if (bi == gridDim.x - 1) {
+        if (threadIdx.x == 0) {
+            k = blockDim.y;
+            while (k < inputHeight) {
+                int y = threadIdx.y + k;
+                if (y < inputHeight) {
+                    if (cumulativeEnergy[inputWidth - 1 + sPathIdx[threadIdx.y] * inputWidth] > cumulativeEnergy[inputWidth - 1 + y * inputWidth]) {
+                        sPathIdx[threadIdx.y] = y;
+                    }
+                }
+                k += blockDim.y;
+            }
+        }
+        __syncthreads();
+        if (threadIdx.x == 0) {
+            for (int stride = blockDim.y / 2; stride > 0; stride /= 2) {
+                if (threadIdx.y < inputHeight && threadIdx.y + stride < inputHeight) {
+                    if (cumulativeEnergy[inputWidth - 1 + sPathIdx[threadIdx.y] * inputWidth] > cumulativeEnergy[inputWidth - 1 + sPathIdx[threadIdx.y + stride] * inputWidth]) {
+                        sPathIdx[threadIdx.y] = sPathIdx[threadIdx.y + stride];
+                    }
+                }
+            }
+        }
+        __syncthreads();
+        if (threadIdx.x == 0 && threadIdx.y == 0) {
+            pathIdx[0] = sPathIdx[0];
+        }
+    }
+}
+
+__global__ void removeHorizontalSeam_device(const pixel_t* input, int inputWidth, int inputHeight, const int* seam, pixel_t* output) {
+    int x = threadIdx.x + blockDim.x * blockIdx.x;
+    int y = threadIdx.y + blockDim.y * blockIdx.y;
+
+    if (x < inputWidth && y < inputHeight - 1) {
+        output[x + y * inputWidth] = input[x + (y + (y >= seam[x])) * inputWidth];
+    }
+}
+
+void seamCarving_device(const image_t& input, image_t& output, DebugInfo* debug) {
+    const int zero = 0;
+
+    int inputWidth   = input.width;
+    int inputHeight  = input.height;
+    int outputWidth  = output.width;
+    int outputHeight = output.height;
+
+    dim3 blockSize;
+    dim3 gridSize;
+
+    bool outputDebug    = false;
+    int  debugFileIndex = 0;
+    char filename[1024];
+
+    if (debug) {
+        system("rmdir -r debug_info_device");
+        system("mkdir debug_info_device");
+        outputDebug = true;
+    }
+
+    float* energy           = (float*)malloc(inputWidth * inputHeight * sizeof(float));
+    float* cumulativeEnergy = (float*)malloc(inputWidth * inputHeight * sizeof(float));
+    int*   path             = (int*)malloc(inputWidth * inputHeight * sizeof(int));
+    int*   seam             = (int*)malloc((inputWidth < inputHeight ? inputHeight : inputWidth) * sizeof(int));
+
+    pixel_t* d_currentInput;
+    pixel_t* d_currentOutput;
+    float*   d_energy;
+    float*   d_cumulativeEnergy;
+    int*     d_path;
+    int*     d_seam;
+    int*     d_pathIdx;
+
+    CHECK(cudaMalloc(&d_currentInput    , inputWidth * inputHeight * sizeof(pixel_t)));
+    CHECK(cudaMalloc(&d_currentOutput   , inputWidth * inputHeight * sizeof(pixel_t)));
+    CHECK(cudaMalloc(&d_energy          , inputWidth * inputHeight * sizeof(float)));
+    CHECK(cudaMalloc(&d_cumulativeEnergy, inputWidth * inputHeight * sizeof(float)));
+    CHECK(cudaMalloc(&d_path            , inputWidth * inputHeight * sizeof(int)));
+    CHECK(cudaMalloc(&d_seam            , (inputWidth < inputHeight ? inputHeight : inputWidth) * sizeof(int)));
+    CHECK(cudaMalloc(&d_pathIdx         , sizeof(int)));
+
+    CHECK(cudaMemcpy(d_currentOutput, input.pixels, inputWidth * inputHeight * sizeof(pixel_t), cudaMemcpyHostToDevice));
+
+    while (inputWidth > outputWidth) {
+        pixel_t* temp   = d_currentInput;
+        d_currentInput  = d_currentOutput;
+        d_currentOutput = temp;
+
+        blockSize = dim3(32, 32);
+        gridSize = dim3((inputWidth - 1) / blockSize.x + 1, (inputHeight - 1) / blockSize.y + 1);
+        computeEnergy_device<<<
+            gridSize, 
+            blockSize, 
+            (blockSize.x + 2) * (blockSize.y + 2) * sizeof(pixel_t)
+        >>>(d_currentInput, inputWidth, inputHeight, d_energy);
+        CHECK(cudaPeekAtLastError());
+
+        if (outputDebug) {
+            CHECK(cudaMemcpy(energy, d_energy, inputWidth * inputHeight * sizeof(float), cudaMemcpyDeviceToHost));
+
+            sprintf(filename, "debug_info_device/%s_%d.txt", debug->outputEnergyFile, debugFileIndex);
+            FILE* f = fopen(filename, "w");
+            if (f) {
+                for (int row = 0; row < inputHeight; ++row) {
+                    for (int col = 0; col < inputWidth; ++col) {
+                        int i = row * inputWidth + col;
+                        if (col != inputWidth - 1) {
+                            fprintf(f, "%.3f ", energy[i]);
+                        }
+                        else {
+                            fprintf(f, "%.3f\n", energy[i]);
+                        }
+                    }
+                }
+                fclose(f);
+            }
+        }
+
+        blockSize = dim3(1024, 1);
+        gridSize = dim3(1, (inputHeight - 1) / blockSize.y + 1);
+        CHECK(cudaMemcpyToSymbol(bCount0, &zero, sizeof(int)));
+        CHECK(cudaMemcpyToSymbol(bCount1, &zero, sizeof(int)));
+        computeVerticalCumulativeEnergy_device<<<
+            gridSize,
+            blockSize,
+            blockSize.x * sizeof(int)
+        >>>(d_energy, inputWidth, inputHeight, d_cumulativeEnergy, d_path, d_pathIdx);
+        CHECK(cudaPeekAtLastError());
+        CHECK(cudaMemcpy(path, d_path, inputWidth * inputHeight * sizeof(float), cudaMemcpyDeviceToHost));
+        CHECK(cudaMemcpy(seam + inputHeight - 1, d_pathIdx, sizeof(int), cudaMemcpyDeviceToHost));
+        for (int i = inputHeight - 2; i >= 0; --i) {
+            seam[i] = path[seam[i + 1] + (i + 1) * inputWidth];
+        }
+
+        if (outputDebug) {
+            sprintf(filename, "debug_info_device/%s_%d.txt", debug->outputSeamFile, debugFileIndex);
+            FILE* f = fopen(filename, "w");
+            if (f) {
+                for (int row = 0; row < inputHeight; ++row) {
+                    fprintf(f, "%d %d\n", seam[row], row);
+                }
+                fclose(f);
+            }
+        }
+
+        blockSize = dim3(32, 32);
+        gridSize = dim3((inputWidth - 1) / blockSize.x + 1, (inputHeight - 1) / blockSize.y + 1);
+        CHECK(cudaMemcpy(d_seam, seam, inputHeight * sizeof(int), cudaMemcpyHostToDevice));
+        removeVerticalSeam_device<<<
+            gridSize,
+            blockSize
+        >>>(d_currentInput, inputWidth, inputHeight, d_seam, d_currentOutput);
+        CHECK(cudaPeekAtLastError());
+
+        --inputWidth;
+        ++debugFileIndex;
+    }
+
+    while (inputHeight > outputHeight) {
+        pixel_t* temp   = d_currentInput;
+        d_currentInput  = d_currentOutput;
+        d_currentOutput = temp;
+
+        blockSize = dim3(32, 32);
+        gridSize = dim3((inputWidth - 1) / blockSize.x + 1, (inputHeight - 1) / blockSize.y + 1);
+        computeEnergy_device<<<
+            gridSize, 
+            blockSize, 
+            (blockSize.x + 2) * (blockSize.y + 2) * sizeof(pixel_t)
+        >>>(d_currentInput, inputWidth, inputHeight, d_energy);
+        CHECK(cudaPeekAtLastError());
+
+        if (outputDebug) {
+            CHECK(cudaMemcpy(energy, d_energy, inputWidth * inputHeight * sizeof(float), cudaMemcpyDeviceToHost));
+
+            sprintf(filename, "debug_info_device/%s_%d.txt", debug->outputEnergyFile, debugFileIndex);
+            FILE* f = fopen(filename, "w");
+            if (f) {
+                for (int row = 0; row < inputHeight; ++row) {
+                    for (int col = 0; col < inputWidth; ++col) {
+                        int i = row * inputWidth + col;
+                        if (col != inputWidth - 1) {
+                            fprintf(f, "%.3f ", energy[i]);
+                        }
+                        else {
+                            fprintf(f, "%.3f\n", energy[i]);
+                        }
+                    }
+                }
+                fclose(f);
+            }
+        }
+
+        blockSize = dim3(1, 1024);
+        gridSize = dim3((inputWidth - 1) / blockSize.x + 1, 1);
+        CHECK(cudaMemcpyToSymbol(bCount0, &zero, sizeof(int)));
+        CHECK(cudaMemcpyToSymbol(bCount1, &zero, sizeof(int)));
+        computeHorizontalCumulativeEnergy_device<<<
+            gridSize,
+            blockSize,
+            blockSize.y * sizeof(int)
+        >>>(d_energy, inputWidth, inputHeight, d_cumulativeEnergy, d_path, d_pathIdx);
+        CHECK(cudaPeekAtLastError());
+        CHECK(cudaMemcpy(path, d_path, inputWidth * inputHeight * sizeof(float), cudaMemcpyDeviceToHost));
+        CHECK(cudaMemcpy(seam + inputWidth - 1, d_pathIdx, sizeof(int), cudaMemcpyDeviceToHost));
+        for (int i = inputWidth - 2; i >= 0; --i) {
+            seam[i] = path[i + 1 + seam[i + 1] * inputWidth];
+        }
+
+        if (outputDebug) {
+            sprintf(filename, "debug_info_device/%s_%d.txt", debug->outputSeamFile, debugFileIndex);
+            FILE* f = fopen(filename, "w");
+            if (f) {
+                for (int col = 0; col < inputWidth; ++col) {
+                    fprintf(f, "%d %d\n", col, seam[col]);
+                }
+                fclose(f);
+            }
+        }
+
+        blockSize = dim3(32, 32);
+        gridSize = dim3((inputWidth - 1) / blockSize.x + 1, (inputHeight - 1) / blockSize.y + 1);
+        CHECK(cudaMemcpy(d_seam, seam, inputWidth * sizeof(int), cudaMemcpyHostToDevice));
+        removeHorizontalSeam_device<<<
+            gridSize,
+            blockSize
+        >>>(d_currentInput, inputWidth, inputHeight, d_seam, d_currentOutput);
+        CHECK(cudaPeekAtLastError());
+
+        --inputHeight;
+        ++debugFileIndex;
+    }
+    
+    CHECK(cudaMemcpy(output.pixels, d_currentOutput, outputWidth * outputHeight * sizeof(pixel_t), cudaMemcpyDeviceToHost));
+
+    CHECK(cudaFree(d_currentInput));
+    CHECK(cudaFree(d_currentOutput));
+    CHECK(cudaFree(d_energy));
+    CHECK(cudaFree(d_cumulativeEnergy));
+    CHECK(cudaFree(d_path));
+    CHECK(cudaFree(d_seam));
+    CHECK(cudaFree(d_pathIdx));
+
+    free(energy);
+    free(cumulativeEnergy);
+    free(path);
+    free(seam);
 }
 
 int main(int argc, char** argv) {
-    if (argc != 5 && argc != 7 && argc != 8 && argc != 10) {
+    if (argc == 1) {
+        image_t image;
+        readImage("tree.pnm", image);
+        writeImage("temp.pnm", image);
+        printf("[%d, %d]\n", image.width, image.height);
+        return 0;
+    }
+
+    if (argc != 5 && argc != 9) {
         printf("[ERROR] Invalid number of arguments\n");
         return 1; 
     }
@@ -352,8 +823,6 @@ int main(int argc, char** argv) {
     char*      outputFile = argv[4];
     int        newWidth   = atoi(argv[2]);
     int        newHeight  = atoi(argv[3]);
-    int        blockSizeX = 64;
-    int        blockSizeY = 64;
     DebugInfo* debug      = nullptr;
 
     for (char* c = outputFile; *c != '\0'; ++c) {
@@ -363,109 +832,106 @@ int main(int argc, char** argv) {
         }
     }
 
-    int d = 5;
-    if (argc == 7 || argc == 10) {
-        blockSizeX = atoi(argv[5]);
-        blockSizeX = atoi(argv[6]);
-        d = 7;
-    }
-
-    if (argc == 8 || argc == 10) {
-        if (!strcmp(argv[d], "-d")) {
+    if (argc == 9) {
+        if (!strcmp(argv[5], "-d")) {
             debug = (DebugInfo*)malloc(sizeof(DebugInfo));
-            debug->outputEnergyFile = argv[d + 1];
-            debug->outputSeamFile   = argv[d + 2];
+            debug->outputEnergyFile   = argv[6];
+            debug->outputSeamFile     = argv[7];
+            debug->outputProfilerFile = argv[8];
         }
         else {
-            printf("[ERROR] Unknown argument %s\n", argv[d]);
+            printf("[ERROR] Unknown argument %s\n", argv[5]);
             return 1;
         }
     }
 
-    if (blockSizeX <= 0 || blockSizeY <= 0) {
-        printf("[ERROR] Invalid arguments: Block size must be positive\n");
-        return 1; 
-    }
-
-    int      inputWidth  = 0;
-    int      inputHeight = 0;
-    pixel_t* inputPixels = nullptr;
-    if (readPnm(inputFile, inputPixels, inputWidth, inputHeight)) {
+    image_t inputImage;
+    if (readImage(inputFile, inputImage)) {
         return 1;
     }
 
-    if (newWidth <= 0 || newWidth >= inputWidth) {
+    if (newWidth <= 0 || newWidth > inputImage.width) {
         printf("[ERROR] Invalid arguments: New width must be positive and smaller than input image width\n");
         return 1; 
     }
 
-    if (newHeight <= 0 || newHeight >= inputHeight) {
+    if (newHeight <= 0 || newHeight > inputImage.height) {
         printf("[ERROR] Invalid arguments: New height must be positive and smaller than input image height\n");
         return 1; 
     }
 
-    int outputWidth  = newWidth;
-    int outputHeight = newHeight;
+    GpuTimer timer;
 
     // Info
     cudaDeviceProp devProv;
     CHECK(cudaGetDeviceProperties(&devProv, 0));
 
-    printf("[INFO] GPU\n");
-    printf("[INFO]     Name                         : %s\n"        , devProv.name);
-    printf("[INFO]     Compute capability           : %d.%d\n"     , devProv.major, devProv.minor);
-    printf("[INFO]     Number of SMs                : %d\n"        , devProv.multiProcessorCount);
-    printf("[INFO]     Max number of threads per SM : %d\n"        , devProv.maxThreadsPerMultiProcessor); 
-    printf("[INFO]     Max number of warps per SM   : %d\n"        , devProv.maxThreadsPerMultiProcessor / devProv.warpSize);
-    printf("[INFO]     GMEM                         : %zu byte\n"  , devProv.totalGlobalMem);
-    printf("[INFO]     SMEM per SM                  : %zu byte\n"  , devProv.sharedMemPerMultiprocessor);
-    printf("[INFO]     SMEM per block               : %zu byte\n\n", devProv.sharedMemPerBlock);
-    printf("[INFO] Input image\n");
-    printf("[INFO]     Width  : %d (pixels)\n"  , inputWidth);
-    printf("[INFO]     Height : %d (pixels)\n\n", inputHeight);
-    printf("[INFO] Output image\n");
-    printf("[INFO]     Width  : %d (pixels)\n"  , outputWidth);
-    printf("[INFO]     Height : %d (pixels)\n\n", outputHeight);
+    printf("[INFO] ====================== GPU info ======================\n");
+    printf("[INFO]     Name                         : %s\n"      , devProv.name);
+    printf("[INFO]     Compute capability           : %d.%d\n"   , devProv.major, devProv.minor);
+    printf("[INFO]     Number of SMs                : %d\n"      , devProv.multiProcessorCount);
+    printf("[INFO]     Max number of threads per SM : %d\n"      , devProv.maxThreadsPerMultiProcessor); 
+    printf("[INFO]     Max number of warps per SM   : %d\n"      , devProv.maxThreadsPerMultiProcessor / devProv.warpSize);
+    printf("[INFO]     GMEM                         : %zu byte\n", devProv.totalGlobalMem);
+    printf("[INFO]     SMEM per SM                  : %zu byte\n", devProv.sharedMemPerMultiprocessor);
+    printf("[INFO]     SMEM per block               : %zu byte\n", devProv.sharedMemPerBlock);
 
+    printf("[INFO] ==================== Input image =====================\n");
+    printf("[INFO]     Width  : %d (pixels)\n", inputImage.width);
+    printf("[INFO]     Height : %d (pixels)\n", inputImage.height);
+
+    printf("[INFO] ==================== Output image ==================== \n");
+    printf("[INFO]     Width  : %d (pixels)\n", newWidth);
+    printf("[INFO]     Height : %d (pixels)\n", newHeight);
+
+    printf("[INFO] ===================== Debug info ===================== \n");
     if (debug) {
-        printf("[INFO] Debug info\n");
-        printf("[INFO]     Output energy file     : %s\n"  , debug->outputEnergyFile);
-        printf("[INFO]     Output first seam file : %s\n\n", debug->outputSeamFile);
+        printf("[INFO]     Output energy file   : %s\n", debug->outputEnergyFile);
+        printf("[INFO]     Output seam file     : %s\n", debug->outputSeamFile);
+        printf("[INFO]     Output profiler file : %s\n", debug->outputProfilerFile);
     }
     else {
-        printf("[INFO] Debug info disabled\n\n");
+        printf("[INFO]     Disabled\n");
     }
 
-    char* hostOutputFile   = concatStr(outputFile, "_host.pnm");
-    char* deviceOutputFile = concatStr(outputFile, "_device.pnm");
-
-    pixel_t* hostOutputPixels   = (pixel_t*)malloc(outputWidth * outputHeight * sizeof(pixel_t));
-    pixel_t* deviceOutputPixels = (pixel_t*)malloc(outputWidth * outputHeight * sizeof(pixel_t));
-    
-    if (!hostOutputPixels || !deviceOutputPixels) {
-        printf("[ERROR] Unable to allocate memory for output\n");
-        return 1;
-    }
-
-    GpuTimer timer;
+    printf("[INFO] ================== Execution info ==================== \n");
 
     // Host
-    seamCarving_host(inputPixels, inputWidth, inputHeight, hostOutputPixels, outputWidth, outputHeight, debug);
-    writePnm(hostOutputFile, hostOutputPixels, outputWidth, outputHeight);
-
+    char* hostOutputFile = concatStr(outputFile, "_host.pnm");
+    image_t hostOutputImage;
+    if (allocateImage(hostOutputImage, newWidth, newHeight)) {
+        printf("[ERROR] Unable to allocate space for output\n");
+        return 1;
+    }
+    timer.Start();
+    seamCarving_host(inputImage, hostOutputImage, debug);
+    timer.Stop();
+    printf("[INFO]     Host implementation\n");
+    printf("[INFO]         Execution time : %.3f ms\n", timer.Elapsed());
+    writeImage(hostOutputFile, hostOutputImage);
+    
+    
     // Device
-
-
-    if (hostOutputPixels) {
-        free(hostOutputPixels);
+    char* deviceOutputFile = concatStr(outputFile, "_device.pnm");
+    image_t deviceOutputImage;
+    if (allocateImage(deviceOutputImage, newWidth, newHeight)) {
+        printf("[ERROR] Unable to allocate space for output\n");
+        return 1;
     }
-    if (deviceOutputPixels) {
-        free(deviceOutputPixels);
+    timer.Start();
+    seamCarving_device(inputImage, deviceOutputImage, debug);
+    timer.Stop();
+    printf("[INFO]     Device implementation\n");
+    printf("[INFO]         Execution time : %.3f ms\n", timer.Elapsed());
+    printf("[INFO]         Error          : %.3f\n", computeError(hostOutputImage.pixels, deviceOutputImage.pixels, newWidth * newHeight));
+    writeImage(deviceOutputFile, deviceOutputImage);
+    
+    if (debug) {
+        free(debug);
     }
 
-    if (inputPixels) {
-        free(inputPixels);
-    }
+    freeImage(hostOutputImage);
+    freeImage(deviceOutputImage);
     if (hostOutputFile) {
         free(hostOutputFile);
     }
