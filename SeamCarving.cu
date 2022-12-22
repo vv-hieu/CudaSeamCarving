@@ -100,8 +100,6 @@ void findVerticalSeam_host(const float* energy, int inputWidth, int inputHeight,
         cumulativeEnergy[col] = energy[col];
     }
 
-    float seamWeight = 0.0f;
-    int   seamIdx    = -1;
     for (int row = 1; row < inputHeight; ++row) {
         for (int col = 0; col < inputWidth; ++col) {
             int s = col - 1 < 0 ? 0 : col - 1;
@@ -121,17 +119,25 @@ void findVerticalSeam_host(const float* energy, int inputWidth, int inputHeight,
             int i = col + row * inputWidth;
             cumulativeEnergy[i] = energy[i] + min;
             path[i]             = idx;
+        }
+    }
 
-            if (row == inputHeight - 1) {
-                if (seamIdx < 0 || (seamIdx >= 0 && seamWeight > cumulativeEnergy[i])) {
-                    seamWeight = cumulativeEnergy[i];
-                    seamIdx    = col;
-                }
+    float minSeamWeight = 0.0f;
+    output[inputHeight - 1] = -1;
+
+    int d = 32;
+    int c = d * ((inputWidth - 1) / d + 1);
+    for (int i = 0; i < c; ++i) {
+        int idx = i / d + (i % d) * d;
+        if (idx < inputWidth) {
+            float e = cumulativeEnergy[idx + (inputHeight - 1) * inputWidth];
+            if (output[inputHeight - 1] < 0 || (output[inputHeight - 1] >= 0 && minSeamWeight > e)) {
+                minSeamWeight = e;
+                output[inputHeight - 1] = idx;
             }
         }
     }
 
-    output[inputHeight - 1] = seamIdx;
     for (int row = inputHeight - 2; row >= 0; --row) {
         output[row] = path[output[row + 1] + (row + 1) * inputWidth];
     }
@@ -150,8 +156,6 @@ void findHorizontalSeam_host(const float* energy, int inputWidth, int inputHeigh
         cumulativeEnergy[row] = energy[row];
     }
 
-    float seamWeight = 0.0f;
-    int   seamIdx    = -1;
     for (int col = 1; col < inputWidth; ++col) {
         for (int row = 0; row < inputHeight; ++row) {
             int s = row - 1 < 0 ? 0 : row - 1;
@@ -171,17 +175,24 @@ void findHorizontalSeam_host(const float* energy, int inputWidth, int inputHeigh
             int i = col + row * inputWidth;
             cumulativeEnergy[i] = energy[i] + min;
             path[col + row * inputWidth] = idx;
+        }
+    }
+    float minSeamWeight = 0.0f;
+    output[inputHeight - 1] = -1;
 
-            if (col == inputWidth - 1) {
-                if (seamIdx < 0 || (seamIdx >= 0 && seamWeight > cumulativeEnergy[i])) {
-                    seamWeight = cumulativeEnergy[i];
-                    seamIdx    = row;
-                }
+    int d = 32;
+    int c = d * ((inputHeight - 1) / d + 1);
+    for (int i = 0; i < c; ++i) {
+        int idx = i / d + (i % d) * d;
+        if (idx < inputHeight) {
+            float e = cumulativeEnergy[inputWidth - 1 + idx * inputWidth];
+            if (output[inputWidth - 1] < 0 || (output[inputWidth - 1] >= 0 && minSeamWeight > e)) {
+                minSeamWeight = e;
+                output[inputWidth - 1] = idx;
             }
         }
     }
 
-    output[inputWidth - 1] = seamIdx;
     for (int col = inputWidth - 2; col >= 0; --col) {
         output[col] = path[col + 1 + output[col + 1] * inputWidth];
     }
@@ -331,7 +342,11 @@ __device__ float pixelDiff_device(pixel_t p1, pixel_t p2) {
     float r = p2.r - p1.r;
     float g = p2.g - p1.g;
     float b = p2.b - p1.b;
-    return 0.3f * r + 0.59f * g + 0.11f * b;
+    return (
+        (r < 0.0f ? -r : r) +
+        (g < 0.0f ? -g : g) +
+        (b < 0.0f ? -b : b)
+    );
 }
 
 __global__ void computeEnergy_device(const pixel_t* input, int inputWidth, int inputHeight, float* output) {

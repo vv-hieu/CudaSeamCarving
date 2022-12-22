@@ -40,7 +40,11 @@ float diff(pixel_t p1, pixel_t p2) {
     float r = p2.r - p1.r;
     float g = p2.g - p1.g;
     float b = p2.b - p1.b;
-    return 0.3f * r + 0.59f * g + 0.11f * b;
+    return (
+        (r < 0.0f ? -r : r) +
+        (g < 0.0f ? -g : g) +
+        (b < 0.0f ? -b : b)
+    );
 }
 
 int fpeek(FILE *stream)
