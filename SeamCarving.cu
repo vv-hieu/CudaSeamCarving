@@ -462,56 +462,6 @@ __global__ void computeEnergy_device2(const pixel_t* input, int inputWidth, int 
     __syncthreads();
 }
 
-__global__ void grayscaleAndComputeEnergy_device(const pixel_t* input, int inputWidth, int inputHeight, float* output) {
-    extern __shared__ pixel_t sData[];
-    int offset = 0;
-    while (offset < (blockDim.x + 2) * (blockDim.y + 2)) {
-        int dest = threadIdx.x + threadIdx.y * blockDim.x + offset;
-        int destX = dest % (blockDim.x + 2);
-        int destY = dest / (blockDim.x + 2);
-        int srcX = blockIdx.x * blockDim.x + destX - 1;
-        int srcY = blockIdx.y * blockDim.y + destY - 1;
-        srcX = srcX < 0 ? 0 : srcX >= inputWidth  ? inputWidth  - 1 : srcX;
-        srcY = srcY < 0 ? 0 : srcY >= inputHeight ? inputHeight - 1 : srcY;
-
-        if (destY < blockDim.y + 2) {
-            int idx = srcX + srcY * inputWidth;
-            float grayscaleVal = 0.299f * input[idx].r + 0.587f * input[idx].g + 0.114f * input[idx].g;
-            sData[dest].r = grayscaleVal;
-            sData[dest].g = grayscaleVal;
-            sData[dest].b = grayscaleVal;
-        }
-
-        offset += blockDim.x * blockDim.y;
-    }
-    __syncthreads();
-
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
-
-    if (x >= 0 && x < inputWidth && y >= 0 && y < inputHeight) {
-        float sobelX = (
-            -1.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 0 + (threadIdx.y + 0) * (blockDim.x + 2)]) + 
-            -2.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 0 + (threadIdx.y + 1) * (blockDim.x + 2)]) + 
-            -1.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 0 + (threadIdx.y + 2) * (blockDim.x + 2)]) + 
-             1.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 2 + (threadIdx.y + 0) * (blockDim.x + 2)]) + 
-             2.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 2 + (threadIdx.y + 1) * (blockDim.x + 2)]) + 
-             1.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 2 + (threadIdx.y + 2) * (blockDim.x + 2)])
-        );
-        float sobelY = (
-            -1.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 0 + (threadIdx.y + 0) * (blockDim.x + 2)]) + 
-            -2.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 1 + (threadIdx.y + 0) * (blockDim.x + 2)]) + 
-            -1.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 2 + (threadIdx.y + 0) * (blockDim.x + 2)]) + 
-             1.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 0 + (threadIdx.y + 2) * (blockDim.x + 2)]) + 
-             2.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 1 + (threadIdx.y + 2) * (blockDim.x + 2)]) + 
-             1.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 2 + (threadIdx.y + 2) * (blockDim.x + 2)])
-        );
-        float val = sobelX * sobelX + sobelY + sobelY;
-        output[x + y * inputWidth] = sqrtf(val < 0.0f ? 0.0f : val);
-    }
-    __syncthreads();
-}
-
 __global__ void computeVerticalCumulativeEnergy_device(const float* energy, int inputWidth, int inputHeight, volatile float* cumulativeEnergy, int* path, int* pathIdx) {
     int k;
     
