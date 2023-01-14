@@ -74,7 +74,7 @@ void grayscale_host(const pixel_t* input, int inputWidth, int inputHeight, pixel
     for (int x0 = 0; x0 < inputWidth; ++x0) {
         for (int y0 = 0; y0 < inputHeight; ++y0) {
             int idx = x0 + y0 * inputWidth;
-            float grayscaleVal = 0.299f * input[idx].r + 0.587f * input[idx].g + 0.114f * input[idx].g;
+            float grayscaleVal = 0.299f * input[idx].r + 0.587f * input[idx].g + 0.114f * input[idx].b;
             output[idx].r = grayscaleVal;
             output[idx].g = grayscaleVal;
             output[idx].b = grayscaleVal;
@@ -383,7 +383,7 @@ __global__ void grayscale_device(const pixel_t* input, int inputWidth, int input
     
     if (x >= 0 && x < inputWidth && y >= 0 && y < inputHeight) {
         int idx = x + y * inputWidth;
-        float grayscaleVal = 0.299f * input[idx].r + 0.587f * input[idx].g + 0.114f * input[idx].g;
+        float grayscaleVal = 0.299f * input[idx].r + 0.587f * input[idx].g + 0.114f * input[idx].b;
         output[idx].r = grayscaleVal;
         output[idx].g = grayscaleVal;
         output[idx].b = grayscaleVal;
