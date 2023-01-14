@@ -101,7 +101,7 @@ void computeEnergy_host(const pixel_t* input, int inputWidth, int inputHeight, f
                  2.0f * diff(input[x0 + y0 * inputWidth], input[x0                               + clamp(y0 + 1, 0, inputHeight - 1) * inputWidth]) +
                  1.0f * diff(input[x0 + y0 * inputWidth], input[clamp(x0 + 1, 0, inputWidth - 1) + clamp(y0 + 1, 0, inputHeight - 1) * inputWidth])
             );
-            float val = sobelX * sobelX + sobelY + sobelY;
+            float val = sobelX * sobelX + sobelY * sobelY;
             output[x0 + y0 * inputWidth] = sqrtf(val < 0.0f ? 0.0f : val);
         }
     }
@@ -456,7 +456,7 @@ __global__ void computeEnergy_device2(const pixel_t* input, int inputWidth, int 
              2.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 1 + (threadIdx.y + 2) * (blockDim.x + 2)]) + 
              1.0f * pixelDiff_device(sData[threadIdx.x + 1 + (threadIdx.y + 1) * (blockDim.x + 2)], sData[threadIdx.x + 2 + (threadIdx.y + 2) * (blockDim.x + 2)])
         );
-        float val = sobelX * sobelX + sobelY + sobelY;
+        float val = sobelX * sobelX + sobelY * sobelY;
         output[x + y * inputWidth] = sqrtf(val < 0.0f ? 0.0f : val);
     }
     __syncthreads();
